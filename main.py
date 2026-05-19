@@ -24,7 +24,7 @@ def run_oda_sim_pipeline():
         try:
             # Baixa os arquivos brutos para o cache do contêiner (retorna os caminhos físicos)
             # Atenção aos parâmetros no plural exigidos pelas versões novas do PySUS
-            arquivos = SIM.download(states=STATE, years=year)
+            arquivos = SIM.download(groups=['cid10'], states=STATE, years=year)
             
             if not arquivos:
                 print(f"Nenhum arquivo retornado pelo DATASUS para o ano {year}.")
