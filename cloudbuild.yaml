@@ -1,0 +1,36 @@
+steps:
+  # 1. Constrói a imagem
+  - name: 'gcr.io/cloud-builders/docker'
+    args: 
+      - 'build'
+      - '-t'
+      - 'southamerica-east1-docker.pkg.dev/$PROJECT_ID/oda-repo/sim-ingestion:latest'
+      - '.'
+
+  # 2. Sobe a imagem para o repositório
+  - name: 'gcr.io/cloud-builders/docker'
+    args: 
+      - 'push'
+      - 'southamerica-east1-docker.pkg.dev/$PROJECT_ID/oda-repo/sim-ingestion:latest'
+
+  # 3. Cria ou atualiza o Cloud Run Job
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'jobs'
+      - 'deploy'
+      - 'sim-alagoinhas-job'
+      - '--image'
+      - 'southamerica-east1-docker.pkg.dev/$PROJECT_ID/oda-repo/sim-ingestion:latest'
+      - '--region'
+      - 'southamerica-east1'
+      - '--tasks'
+      - '1'
+      - '--max-retries'
+      - '0'
+      - '--task-timeout'
+      - '45m' # Timeout maior para permitir o loop de 29 anos sem interromper
+
+options:
+  logging: CLOUD_LOGGING_ONLY

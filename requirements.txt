@@ -1,0 +1,5 @@
+pysus==1.0.1
+httpx==0.27.0
+pandas==2.2.2
+google-cloud-storage==2.16.0
+pyarrow==16.0.0
