@@ -1,11 +1,12 @@
 import os
-from pysus.online_data import SIM
+import io
 import pandas as pd
+from pysus.online_data import SIM
 from google.cloud import storage
 
 def run_oda_sim_pipeline():
     # 1. Configurações
-    BUCKET_NAME = "dados_alagoinhas_bronze" # Altere para o nome do seu bucket
+    BUCKET_NAME = "dados_alagoinhas_bronze" # Altere para o nome real do seu bucket de dev/prod
     DESTINATION_FOLDER = "saude/sim"
     COD_ALAGOINHAS = "290070"
     STATE = "BA"
@@ -18,18 +19,29 @@ def run_oda_sim_pipeline():
 
     # 2. Loop para buscar de 2000 até 2029
     for year in range(2000, 2030):
-        print(f"Buscando dados de {year}...")
+        print(f"\n--- Buscando dados de {year} ---")
         
         try:
-            # O módulo SIM do pysus usa o método download direto por estado e ano
-            df = SIM.download(state=STATE, year=year)
+            # Baixa os arquivos brutos para o cache do contêiner (retorna os caminhos físicos)
+            # Atenção aos parâmetros no plural exigidos pelas versões novas do PySUS
+            arquivos = SIM.download(states=STATE, years=year)
             
-            if df is None or df.empty:
-                print(f"Nenhum arquivo retornado para o ano {year}.")
+            if not arquivos:
+                print(f"Nenhum arquivo retornado pelo DATASUS para o ano {year}.")
+                continue
+                
+            # Garante que seja uma lista (caso o PySUS retorne apenas uma string/caminho)
+            if isinstance(arquivos, str):
+                arquivos = [arquivos]
+                
+            # Lê os arquivos parquet salvos em cache e consolida num único DataFrame
+            df = pd.concat([pd.read_parquet(f) for f in arquivos], ignore_index=True)
+            
+            if df.empty:
+                print(f"O DataFrame carregado está vazio para o ano {year}.")
                 continue
                 
             # 3. Filtro para Alagoinhas
-            # Garante que a coluna está como string para não falhar na filtragem
             if 'CODMUNRES' in df.columns:
                 df['CODMUNRES'] = df['CODMUNRES'].astype(str)
                 df_alagoinhas = df[df['CODMUNRES'].str.startswith(COD_ALAGOINHAS)]
@@ -39,30 +51,47 @@ def run_oda_sim_pipeline():
 
             if df_alagoinhas.empty:
                 print(f"Nenhum dado novo de Alagoinhas para {year}.")
+                # Se não tem dados de Alagoinhas, ainda precisamos limpar o cache da Bahia
+                limpar_cache(arquivos)
                 continue
 
-            # 4. Preparação do arquivo para o Storage
-            # Usamos o diretório /tmp/ pois o Cloud Run Job permite escrita apenas lá
-            local_filename = f"/tmp/sim_alagoinhas_{year}.csv"
-            gcs_filename = f"sim_alagoinhas_{year}.csv"
-            
-            df_alagoinhas.to_csv(local_filename, index=False, sep=';', encoding='utf-8')
+            # 4. Preparação em Memória (Sem usar o disco /tmp/ para economizar RAM)
+            print(f"Preparando arquivo Parquet em memória...")
+            parquet_buffer = io.BytesIO()
+            df_alagoinhas.to_parquet(parquet_buffer, index=False)
+            parquet_buffer.seek(0) # Retorna o ponteiro para o início do buffer
 
-            # 5. Upload para o Cloud Storage
-            print(f"Subindo {gcs_filename} para o bucket {BUCKET_NAME}...")
+            # 5. Upload direto para o Cloud Storage
+            gcs_filename = f"sim_alagoinhas_{year}.parquet"
             blob = bucket.blob(f"{DESTINATION_FOLDER}/{gcs_filename}")
-            blob.upload_from_filename(local_filename)
-            print(f"Upload concluído.")
             
+            print(f"Subindo {gcs_filename} para o bucket {BUCKET_NAME}...")
+            blob.upload_from_file(parquet_buffer, content_type="application/octet-stream")
             print(f"Sucesso! Arquivo disponível em {DESTINATION_FOLDER}/{gcs_filename}")
             
-            # Limpa o arquivo temporário para não estourar a memória do container
-            os.remove(local_filename)
+            # 6. Faxina de Memória (Evita Out of Memory no Cloud Run)
+            limpar_cache(arquivos)
 
         except Exception as e:
             print(f"Falha ao buscar/processar {year} (provavelmente o ano ainda não está no DATASUS). Erro: {e}")
+            # Em caso de erro no meio do processo, tenta limpar o cache se ele foi criado
+            if 'arquivos' in locals():
+                limpar_cache(arquivos)
 
-    print("Processamento do SIM finalizado.")
+    print("\nProcessamento do SIM finalizado.")
+
+
+def limpar_cache(lista_arquivos):
+    """Função auxiliar para deletar os arquivos temporários do PySUS"""
+    print("Limpando cache local do PySUS para liberar memória...")
+    for f in lista_arquivos:
+        try:
+            if os.path.exists(f):
+                os.remove(f)
+                print(f" - Cache removido: {f}")
+        except Exception as e:
+            print(f" - Aviso: Não foi possível remover {f}. Erro: {e}")
+
 
 if __name__ == "__main__":
     run_oda_sim_pipeline()
