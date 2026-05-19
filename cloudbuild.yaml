@@ -1,36 +1,15 @@
 steps:
-  # 1. Constrói a imagem
+  # Passo 1: Construir a imagem Docker
   - name: 'gcr.io/cloud-builders/docker'
-    args: 
-      - 'build'
-      - '-t'
-      - 'southamerica-east1-docker.pkg.dev/$PROJECT_ID/oda-repo/sim-ingestion:latest'
-      - '.'
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/oda-sim-job:$COMMIT_SHA', '-t', 'gcr.io/$PROJECT_ID/oda-sim-job:latest', '.']
 
-  # 2. Sobe a imagem para o repositório
+  # Passo 2: Enviar a imagem para o registro com a tag do Commit
   - name: 'gcr.io/cloud-builders/docker'
-    args: 
-      - 'push'
-      - 'southamerica-east1-docker.pkg.dev/$PROJECT_ID/oda-repo/sim-ingestion:latest'
+    args: ['push', 'gcr.io/$PROJECT_ID/oda-sim-job:$COMMIT_SHA']
 
-  # 3. Cria ou atualiza o Cloud Run Job
-  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    entrypoint: gcloud
-    args:
-      - 'run'
-      - 'jobs'
-      - 'deploy'
-      - 'sim-alagoinhas-job'
-      - '--image'
-      - 'southamerica-east1-docker.pkg.dev/$PROJECT_ID/oda-repo/sim-ingestion:latest'
-      - '--region'
-      - 'southamerica-east1'
-      - '--tasks'
-      - '1'
-      - '--max-retries'
-      - '0'
-      - '--task-timeout'
-      - '45m' # Timeout maior para permitir o loop de 29 anos sem interromper
+  # Passo 3: Enviar a imagem para o registro com a tag Latest
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/oda-sim-job:latest']
 
 options:
   logging: CLOUD_LOGGING_ONLY
