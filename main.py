@@ -23,30 +23,35 @@ def run_oda_sim_pipeline():
         print(f"\n--- Buscando dados de {year} ---")
         
         try:
-            # O PySUS baixa e converte
+            # O PySUS descarrega e converte
             resultado_sim = SIM.download(groups=['cid10'], states=STATE, years=year)
             
-            # Adicionei esse print para vermos exatamente o que o PySUS está devolvendo
             print(f"Download concluído. Tipo do objeto retornado: {type(resultado_sim)}")
             
             if resultado_sim is None:
-                print(f"DATASUS não retornou arquivos para {year}.")
+                print(f"DATASUS não retornou ficheiros para {year}.")
                 limpar_cache_pysus()
                 continue
                 
-            # 1. Se for objeto PyArrow (nova versão do PySUS usa PyArrow Table)
-            if hasattr(resultado_sim, 'to_pandas'):
+            # 1. Se for uma classe personalizada do PySUS (como o ParquetSet)
+            if hasattr(resultado_sim, 'to_dataframe'):
+                df = resultado_sim.to_dataframe()
+                
+            # 2. Se for objeto PyArrow (nova versão de algumas bibliotecas usa PyArrow Table)
+            elif hasattr(resultado_sim, 'to_pandas'):
                 df = resultado_sim.to_pandas()
                 
-            # 2. Se já for Pandas DataFrame nativo
+            # 3. Se já for Pandas DataFrame nativo
             elif isinstance(resultado_sim, pd.DataFrame):
                 df = resultado_sim
                 
-            # 3. Se for Lista ou Tupla (pode conter tabelas PyArrow, DataFrames ou caminhos)
+            # 4. Se for Lista ou Tupla (pode conter tabelas PyArrow, DataFrames ou caminhos)
             elif isinstance(resultado_sim, (list, tuple)) and len(resultado_sim) > 0:
                 lista_dfs = []
                 for item in resultado_sim:
-                    if hasattr(item, 'to_pandas'):
+                    if hasattr(item, 'to_dataframe'):
+                        lista_dfs.append(item.to_dataframe())
+                    elif hasattr(item, 'to_pandas'):
                         lista_dfs.append(item.to_pandas())
                     elif isinstance(item, pd.DataFrame):
                         lista_dfs.append(item)
@@ -60,7 +65,7 @@ def run_oda_sim_pipeline():
                     limpar_cache_pysus()
                     continue
                     
-            # 4. Se for apenas um caminho de arquivo em formato string
+            # 5. Se for apenas um caminho de ficheiro em formato string
             elif isinstance(resultado_sim, str):
                 df = pd.read_parquet(resultado_sim)
                 
@@ -75,7 +80,7 @@ def run_oda_sim_pipeline():
                 # startswith captura tanto o código de 6 (290070) quanto o de 7 dígitos (2900702)
                 df_alagoinhas = df[df['CODMUNRES'].str.startswith(COD_ALAGOINHAS)]
             else:
-                print(f"Atenção: Coluna CODMUNRES não encontrada em {year}. Pulando...")
+                print(f"Atenção: Coluna CODMUNRES não encontrada em {year}. A saltar...")
                 continue
 
             if df_alagoinhas.empty:
@@ -84,7 +89,7 @@ def run_oda_sim_pipeline():
                 continue
 
             # 4. Preparação em Memória (I/O)
-            print(f"Preparando arquivo Parquet em memória...")
+            print(f"A preparar o ficheiro Parquet em memória...")
             parquet_buffer = io.BytesIO()
             df_alagoinhas.to_parquet(parquet_buffer, index=False)
             parquet_buffer.seek(0) 
@@ -93,22 +98,22 @@ def run_oda_sim_pipeline():
             gcs_filename = f"sim_alagoinhas_{year}.parquet"
             blob = bucket.blob(f"{DESTINATION_FOLDER}/{gcs_filename}")
             
-            print(f"Subindo {gcs_filename} para o bucket {BUCKET_NAME}...")
+            print(f"A enviar {gcs_filename} para o bucket {BUCKET_NAME}...")
             blob.upload_from_file(parquet_buffer, content_type="application/octet-stream")
-            print(f"Sucesso! Arquivo disponível em {DESTINATION_FOLDER}/{gcs_filename}")
+            print(f"Sucesso! Ficheiro disponível em {DESTINATION_FOLDER}/{gcs_filename}")
             
-            # 6. Faxina de Memória do container
+            # 6. Limpeza de Memória do contentor
             limpar_cache_pysus()
 
         except Exception as e:
-            print(f"Falha ao buscar/processar {year}. Erro: {e}")
+            print(f"Falha ao processar {year}. Erro: {e}")
             limpar_cache_pysus()
 
     print("\nProcessamento do SIM finalizado.")
 
 
 def limpar_cache_pysus():
-    """Remove a pasta de cache padrão do PySUS para evitar Out of Memory no container."""
+    """Remove a pasta de cache padrão do PySUS para evitar esgotamento de memória no contentor."""
     try:
         cache_dir = Path.home() / "pysus"
         if cache_dir.exists():
