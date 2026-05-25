@@ -23,30 +23,49 @@ def run_oda_sim_pipeline():
         print(f"\n--- Buscando dados de {year} ---")
         
         try:
-            # O PySUS baixa, converte e retorna o DataFrame diretamente
+            # O PySUS baixa e converte
             resultado_sim = SIM.download(groups=['cid10'], states=STATE, years=year)
             
+            # Adicionei esse print para vermos exatamente o que o PySUS está devolvendo
+            print(f"Download concluído. Tipo do objeto retornado: {type(resultado_sim)}")
             
-            # 1. Padroniza tudo para lista se for uma string (caminho único)
-            if isinstance(resultado_sim, str):
-                resultado_sim = [resultado_sim]
+            if resultado_sim is None:
+                print(f"DATASUS não retornou arquivos para {year}.")
+                limpar_cache_pysus()
+                continue
                 
-            # 2. Transforma em DataFrame dependendo do que o PySUS devolveu
-            if isinstance(resultado_sim, pd.DataFrame):
+            # 1. Se for objeto PyArrow (nova versão do PySUS usa PyArrow Table)
+            if hasattr(resultado_sim, 'to_pandas'):
+                df = resultado_sim.to_pandas()
+                
+            # 2. Se já for Pandas DataFrame nativo
+            elif isinstance(resultado_sim, pd.DataFrame):
                 df = resultado_sim
+                
+            # 3. Se for Lista ou Tupla (pode conter tabelas PyArrow, DataFrames ou caminhos)
             elif isinstance(resultado_sim, (list, tuple)) and len(resultado_sim) > 0:
-                # Se for uma lista de caminhos de arquivos (strings)
-                if isinstance(resultado_sim[0], str):
-                    df = pd.concat([pd.read_parquet(f) for f in resultado_sim], ignore_index=True)
-                # Se for uma lista/tupla de DataFrames
-                elif isinstance(resultado_sim[0], pd.DataFrame):
-                    df = pd.concat(resultado_sim, ignore_index=True)
+                lista_dfs = []
+                for item in resultado_sim:
+                    if hasattr(item, 'to_pandas'):
+                        lista_dfs.append(item.to_pandas())
+                    elif isinstance(item, pd.DataFrame):
+                        lista_dfs.append(item)
+                    elif isinstance(item, str):
+                        lista_dfs.append(pd.read_parquet(item))
+                
+                if lista_dfs:
+                    df = pd.concat(lista_dfs, ignore_index=True)
                 else:
-                    print(f"Tipo de dado inesperado na lista para {year}.")
+                    print(f"A lista retornada não continha dados convertíveis para {year}.")
                     limpar_cache_pysus()
                     continue
+                    
+            # 4. Se for apenas um caminho de arquivo em formato string
+            elif isinstance(resultado_sim, str):
+                df = pd.read_parquet(resultado_sim)
+                
             else:
-                print(f"Nenhum dado válido retornado para {year}.")
+                print(f"Formato não reconhecido para {year}: {type(resultado_sim)}")
                 limpar_cache_pysus()
                 continue
                 
