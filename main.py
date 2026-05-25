@@ -26,20 +26,28 @@ def run_oda_sim_pipeline():
             # O PySUS baixa, converte e retorna o DataFrame diretamente
             resultado_sim = SIM.download(groups=['cid10'], states=STATE, years=year)
             
-            # Validação do retorno (pode ser DataFrame ou Tupla de DataFrames)
-            if isinstance(resultado_sim, tuple):
-                if not resultado_sim:
-                    print(f"Nenhum dado retornado pelo DATASUS para o ano {year}.")
-                    continue
-                df = pd.concat(resultado_sim, ignore_index=True)
-            elif isinstance(resultado_sim, pd.DataFrame):
+            
+            # 1. Padroniza tudo para lista se for uma string (caminho único)
+            if isinstance(resultado_sim, str):
+                resultado_sim = [resultado_sim]
+                
+            # 2. Transforma em DataFrame dependendo do que o PySUS devolveu
+            if isinstance(resultado_sim, pd.DataFrame):
                 df = resultado_sim
+            elif isinstance(resultado_sim, (list, tuple)) and len(resultado_sim) > 0:
+                # Se for uma lista de caminhos de arquivos (strings)
+                if isinstance(resultado_sim[0], str):
+                    df = pd.concat([pd.read_parquet(f) for f in resultado_sim], ignore_index=True)
+                # Se for uma lista/tupla de DataFrames
+                elif isinstance(resultado_sim[0], pd.DataFrame):
+                    df = pd.concat(resultado_sim, ignore_index=True)
+                else:
+                    print(f"Tipo de dado inesperado na lista para {year}.")
+                    limpar_cache_pysus()
+                    continue
             else:
                 print(f"Nenhum dado válido retornado para {year}.")
-                continue
-
-            if df.empty:
-                print(f"O DataFrame carregado está vazio para o ano {year}.")
+                limpar_cache_pysus()
                 continue
                 
             # 3. Filtro para Alagoinhas
